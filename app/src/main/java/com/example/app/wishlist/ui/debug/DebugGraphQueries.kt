@@ -215,6 +215,39 @@ class DebugGraphQueries(context: Context) {
         return TraversalResult(hops, truncated)
     }
 
+    /**
+     * Assertions naming this person as the BENEFICIARY.
+     *
+     * Ingestion always writes `subjectKey = sender`, so "red dress for mom" is stored as
+     * an assertion *by the sender* with a BENEFICIARY edge to mom. Asking what to gift mom
+     * therefore cannot be answered from `subjectKey` alone — this is the other half of the
+     * question, and without it the strongest gift signal the pipeline produces is the one
+     * signal the ranking never sees.
+     */
+    fun assertionsForBeneficiary(personKey: Long): List<KgNode> {
+        val incoming = edges.query(
+            KgEdge_.toKey.equal(personKey)
+                .and(KgEdge_.edgeTypeId.equal(EdgeType.BENEFICIARY.id.toLong()))
+        ).build().use { it.find() }
+
+        return incoming.mapNotNull { nodes.get(it.fromKey) }
+            .filter { NodeType.fromId(it.nodeTypeId) == NodeType.ASSERTION }
+    }
+
+    /**
+     * For each of [assertionKeys] that has one, the person the assertion is *for*.
+     *
+     * Used to tell "Amy wants this" from "Amy picked this out for someone else" — the two
+     * are indistinguishable by subject alone, and conflating them credits the wrong person.
+     */
+    fun beneficiaryTargets(assertionKeys: Set<Long>): Map<Long, Long> {
+        if (assertionKeys.isEmpty()) return emptyMap()
+        return edges.query(KgEdge_.edgeTypeId.equal(EdgeType.BENEFICIARY.id.toLong()))
+            .build().use { it.find() }
+            .filter { it.fromKey in assertionKeys }
+            .associate { it.fromKey to it.toKey }
+    }
+
     /** Wipes graph nodes and edges. Leaves the legacy `Product` table alone. */
     fun clearGraph() {
         edges.removeAll()

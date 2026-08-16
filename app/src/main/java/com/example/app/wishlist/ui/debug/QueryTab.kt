@@ -142,8 +142,29 @@ private fun ColumnScope.GiftMode(state: DebugUiState, vm: DebugViewModel) {
 
                 if (row.expanded) {
                     Column(Modifier.padding(start = 40.dp, end = 12.dp, bottom = 10.dp)) {
+                        if (row.routeSummary.isNotEmpty()) {
+                            Text(
+                                text = row.routeSummary,
+                                modifier = Modifier.padding(bottom = 2.dp),
+                                fontSize = Dbg.Micro,
+                                fontFamily = Dbg.Mono,
+                                color = Dbg.TextMuted,
+                            )
+                        }
                         row.terms.forEach { term ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                                if (term.viaBeneficiary) {
+                                    // Marks the assertion as reaching this person through a
+                                    // BENEFICIARY edge — someone picked it out *for* them,
+                                    // rather than them saying it themselves.
+                                    Text(
+                                        text = "for them ",
+                                        fontSize = Dbg.Micro,
+                                        fontFamily = Dbg.Mono,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TypePalette.foreground("RECIPIENT"),
+                                    )
+                                }
                                 Text(
                                     text = term.expression,
                                     modifier = Modifier.weight(1f),
@@ -516,10 +537,25 @@ private fun ModeButton(label: String, selected: Boolean, modifier: Modifier, onC
 }
 
 private val GIFT_KOTLIN = """
-fun candidatesFor(personKey: Long): List<Ranked> =
-  nodeBox.query(KgNode_.nodeTypeId.equal(NodeType.ASSERTION.id.toLong())
+// Two routes reach a person. subjectKey alone answers "what have they talked
+// about" — not "what should they be given" — and returns nothing at all for
+// someone who is only ever a recipient.
+fun candidatesFor(personKey: Long): List<Ranked> {
+  val said = nodeBox.query(KgNode_.nodeTypeId.equal(NodeType.ASSERTION.id.toLong())
       .and(KgNode_.subjectKey.equal(personKey)))
     .build().use { it.find() }
+
+  val saidFor = edgeBox.query(KgEdge_.toKey.equal(personKey)
+      .and(KgEdge_.edgeTypeId.equal(EdgeType.BENEFICIARY.id.toLong())))
+    .build().use { it.find() }
+    .mapNotNull { nodeBox.get(it.fromKey) }
+
+  // Drop claims this person made for someone ELSE: that is evidence about the
+  // beneficiary, not about them.
+  val forOthers = beneficiaryTargets(said.map { it.graphKey }.toSet())
+  val own = said.filter { forOthers[it.graphKey].let { t -> t == null || t == personKey } }
+
+  return (own + saidFor).distinctBy { it.graphKey }
     .groupBy { it.objectKey }
     .map { (key, rows) ->
       val signals = rows.map {
@@ -528,6 +564,7 @@ fun candidatesFor(personKey: Long): List<Ranked> =
       }
       Ranked(key, Scoring.normalize(Scoring.baseScore(signals)))
     }.sortedByDescending { it.score }
+}
 """.trim()
 
 private val TRAVERSAL_KOTLIN = """

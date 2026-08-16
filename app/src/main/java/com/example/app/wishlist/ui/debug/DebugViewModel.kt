@@ -39,7 +39,14 @@ enum class QueryMode { GIFT, RAW, TRAVERSAL }
 enum class VizLayout { FORCE, RADIAL }
 
 /** One factor line in a gift candidate's score breakdown. */
-data class GiftTerm(val expression: String, val value: String, val negative: Boolean)
+data class GiftTerm(
+    val expression: String,
+    val value: String,
+    val negative: Boolean,
+    /** True when this assertion reaches the person through a BENEFICIARY edge rather than
+     *  by being its subject — i.e. someone else picked this out *for* them. */
+    val viaBeneficiary: Boolean = false,
+)
 
 data class GiftRow(
     val graphKey: Long,
@@ -59,6 +66,8 @@ data class GiftRow(
     val negative: Boolean,
     val terms: List<GiftTerm>,
     val expanded: Boolean,
+    /** e.g. "2 direct · 1 for them" — which route(s) put this candidate on the list. */
+    val routeSummary: String,
 )
 
 data class RawRow(
@@ -738,9 +747,36 @@ class DebugViewModel(app: Application) : AndroidViewModel(app) {
 
             val result = withContext(Dispatchers.IO) {
                 val today = LocalDate.now().toEpochDay()
-                val assertions = queries.assertionsForSubject(current.giftPerson)
 
-                val candidates = assertions.groupBy { it.objectKey }.mapNotNull { (objectKey, group) ->
+                // Two routes reach a person, and the gift question needs both.
+                //
+                //  - subject: they said it themselves ("i want running shoes")
+                //  - beneficiary: someone said it *for* them ("red dress for mom")
+                //
+                // Ingestion always sets subjectKey to the sender, so the second route
+                // exists only as a BENEFICIARY edge. Reading subjectKey alone answers
+                // "what has this person talked about", which is a different question and
+                // silently returns nothing for anyone who is only ever a recipient.
+                val subjectRows = queries.assertionsForSubject(current.giftPerson)
+                val beneficiaryRows = queries.assertionsForBeneficiary(current.giftPerson)
+                val targets = queries.beneficiaryTargets(subjectRows.mapTo(HashSet()) { it.graphKey })
+
+                // The mirror of the same bug: a claim the sender made *for someone else*
+                // is evidence about that person, not about the sender. Counting it for
+                // both means every gift you pick out for someone becomes a suggestion for
+                // you.
+                val ownRows = subjectRows.filter { node ->
+                    val target = targets[node.graphKey]
+                    target == null || target == current.giftPerson
+                }
+
+                val routed: List<Pair<KgNode, Boolean>> =
+                    (ownRows.map { it to false } + beneficiaryRows.map { it to true })
+                        .distinctBy { it.first.graphKey }
+
+                val candidates = routed.groupBy { it.first.objectKey }.mapNotNull { (objectKey, entries) ->
+                    val group = entries.map { it.first }
+                    val viaBeneficiary = entries.associate { it.first.graphKey to it.second }
                     val obj = queries.node(objectKey) ?: return@mapNotNull null
                     val objType = NodeType.fromId(obj.nodeTypeId)
                     // Only things that can be given. An assertion whose object is a PERSON
@@ -756,7 +792,7 @@ class DebugViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                    val terms = signals.mapTo(mutableListOf()) { signal ->
+                    val terms = group.zip(signals).mapTo(mutableListOf()) { (node, signal) ->
                         val relevance = Relevance.of(signal)
                         val halfLife = signal.predicate.halfLifeDays
                         GiftTerm(
@@ -766,6 +802,7 @@ class DebugViewModel(app: Application) : AndroidViewModel(app) {
                                 (halfLife?.let { "hl=${it.toInt()}" } ?: "none") + ")",
                             value = String.format("%.3f", relevance),
                             negative = relevance < 0,
+                            viaBeneficiary = viaBeneficiary[node.graphKey] == true,
                         )
                     }
 
@@ -812,6 +849,15 @@ class DebugViewModel(app: Application) : AndroidViewModel(app) {
                         negative = candidate.base < 0,
                         terms = candidate.terms,
                         expanded = current.expandedGift == candidate.node.graphKey,
+                        routeSummary = candidate.terms
+                            .filter { !it.expression.startsWith("acquisitionEffect") }
+                            .partition { it.viaBeneficiary }
+                            .let { (forThem, direct) ->
+                                listOfNotNull(
+                                    direct.size.takeIf { n -> n > 0 }?.let { n -> "$n direct" },
+                                    forThem.size.takeIf { n -> n > 0 }?.let { n -> "$n for them" },
+                                ).joinToString(" \u00b7 ")
+                            },
                     )
                 }
                 Result(
