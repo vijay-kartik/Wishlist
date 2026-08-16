@@ -1,0 +1,18 @@
+{
+  "_comment": "Replace with the ontology exported alongside the trained model. Order of `labels` IS the label-id order the model emits; index i in the [1, seqLen, numLabels] output corresponds to labels[i].",
+  "modelVersion": "0.1.0",
+  "maxSequenceLength": 128,
+  "doLowerCase": true,
+  "labels": [
+    "O",
+    "B-CATEGORY", "I-CATEGORY",
+    "B-BRAND", "I-BRAND",
+    "B-COLOR", "I-COLOR",
+    "B-SIZE", "I-SIZE",
+    "B-MATERIAL", "I-MATERIAL",
+    "B-PRICE", "I-PRICE",
+    "B-PERSON", "I-PERSON",
+    "B-OCCASION", "I-OCCASION"
+  ],
+  "minEntityConfidence": 0.5
+}

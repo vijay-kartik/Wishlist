@@ -49,6 +49,14 @@ android {
     buildFeatures {
         compose = true
     }
+
+    androidResources {
+        // The 110 MB model MUST stay uncompressed. AAPT compresses assets by default,
+        // and a compressed .tflite cannot be memory-mapped — the Interpreter would have
+        // to inflate the whole thing onto the heap, which on a 110 MB model means an
+        // OutOfMemoryError in a background service rather than a slow load.
+        noCompress += listOf("tflite", "txt", "json")
+    }
 }
 
 // Pins Kotlin compilation (incl. kapt's stub-generation task) to the same JDK as
@@ -75,9 +83,26 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    // ObjectBox (Knowledge Graph Storage)
+    // ObjectBox (Knowledge Graph Storage).
+    // Still kapt, not KSP: ObjectBox has no KSP processor yet (objectbox-java#1075),
+    // which is why android.builtInKotlin/newDsl stay disabled in gradle.properties.
     implementation(libs.objectbox.kotlin)
-    kapt("io.objectbox:objectbox-processor:3.7.1")
+    kapt(libs.objectbox.processor)
+
+    // On-device NER inference, per android_inference_guide.md.
+    //
+    // MUST be LiteRT, not org.tensorflow:tensorflow-lite. The model's embedded
+    // min_runtime_version is 2.21.0; the org.tensorflow line was discontinued at 2.17.0,
+    // so it can never load this model — it fails at Interpreter construction with
+    // "Didn't find op for builtin opcode 'FULLY_CONNECTED' version '12'". LiteRT is the
+    // continuation of that runtime and the only artifact new enough.
+    //
+    // Both artifacts are required and they share a namespace, which AGP 9 rejects; see
+    // android.uniquePackageNames=false in gradle.properties for why that flag is there.
+    // `litert` = Interpreter/InterpreterImpl + native .so, `litert-api` = InterpreterApi
+    // + Tensor. The Interpreter API stays org.tensorflow.lite.Interpreter either way.
+    implementation(libs.google.ai.edge.litert)
+    implementation(libs.google.ai.edge.litert.api)
 
     // Logging
     implementation(libs.timber)

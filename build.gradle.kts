@@ -7,7 +7,11 @@ buildscript {
     dependencies {
         // ObjectBox does not publish a Gradle Plugin Portal marker, so it's applied
         // the classic way (classpath + apply(plugin = ...)) in app/build.gradle.kts.
-        classpath("io.objectbox:objectbox-gradle-plugin:3.7.1")
+        // Keep this in sync with `objectbox` in gradle/libs.versions.toml. The
+        // buildscript block cannot see the version catalog, so it is repeated here.
+        // 5.x is required for on-device vector search (@HnswIndex); 3.7.1 has no
+        // vector support at all.
+        classpath("io.objectbox:objectbox-gradle-plugin:5.4.2")
     }
 }
 

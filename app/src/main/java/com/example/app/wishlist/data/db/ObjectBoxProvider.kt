@@ -8,6 +8,8 @@ import android.content.Context
 // other packages later and this import breaks, either move it back to the common
 // package or pin the location explicitly via the `objectbox { myObjectBoxPackage(...) }`
 // block in app/build.gradle.kts, then update this import to match.
+import com.example.app.wishlist.data.db.entity.KgEdge
+import com.example.app.wishlist.data.db.entity.KgNode
 import com.example.app.wishlist.data.db.entity.MyObjectBox
 import com.example.app.wishlist.data.db.entity.Product
 import io.objectbox.Box
@@ -31,6 +33,8 @@ object ObjectBoxProvider {
 
     private var boxStore: BoxStore? = null
     private var productBox: Box<Product>? = null
+    private var kgNodeBox: Box<KgNode>? = null
+    private var kgEdgeBox: Box<KgEdge>? = null
 
     /**
      * Initialize ObjectBox database.
@@ -49,6 +53,8 @@ object ObjectBoxProvider {
                 .build()
 
             productBox = boxStore?.boxFor(Product::class.java)
+            kgNodeBox = boxStore?.boxFor(KgNode::class.java)
+            kgEdgeBox = boxStore?.boxFor(KgEdge::class.java)
             Timber.d("ObjectBox initialized successfully")
             logDatabaseStats()
         } catch (e: Exception) {
@@ -65,6 +71,26 @@ object ObjectBoxProvider {
             initialize(context)
         }
         return productBox ?: throw IllegalStateException("ProductBox not initialized")
+    }
+
+    /**
+     * Knowledge-graph nodes. All graph writes should go through the graph repository
+     * rather than touching this box directly — resolve-before-create and one
+     * transaction per ingestion batch are invariants the box itself cannot enforce.
+     */
+    fun getKgNodeBox(context: Context): Box<KgNode> {
+        if (boxStore == null) {
+            initialize(context)
+        }
+        return kgNodeBox ?: throw IllegalStateException("KgNodeBox not initialized")
+    }
+
+    /** Knowledge-graph edges. See [getKgNodeBox] on writing through the repository. */
+    fun getKgEdgeBox(context: Context): Box<KgEdge> {
+        if (boxStore == null) {
+            initialize(context)
+        }
+        return kgEdgeBox ?: throw IllegalStateException("KgEdgeBox not initialized")
     }
 
     /**
@@ -86,6 +112,8 @@ object ObjectBoxProvider {
             boxStore?.close()
             boxStore = null
             productBox = null
+            kgNodeBox = null
+            kgEdgeBox = null
             Timber.d("ObjectBox closed")
         } catch (e: Exception) {
             Timber.e(e, "Error closing ObjectBox")
@@ -102,7 +130,7 @@ object ObjectBoxProvider {
      */
     private fun logDatabaseStats() {
         try {
-            val sizeBytes = boxStore?.sizeOnDisk() ?: 0L
+            val sizeBytes = boxStore?.dbSizeOnDisk ?: 0L
             Timber.d("Database file size: $sizeBytes bytes")
         } catch (e: Exception) {
             Timber.e(e, "Error logging database stats")
@@ -116,6 +144,8 @@ object ObjectBoxProvider {
     fun clearAllData(context: Context) {
         try {
             getProductBox(context).removeAll()
+            getKgEdgeBox(context).removeAll()
+            getKgNodeBox(context).removeAll()
             Timber.w("All data cleared from ObjectBox!")
         } catch (e: Exception) {
             Timber.e(e, "Error clearing database")
@@ -130,7 +160,7 @@ object ObjectBoxProvider {
         return try {
             val box = getProductBox(context)
             val productCount = box.count()
-            val sizeBytes = boxStore?.sizeOnDisk() ?: 0L
+            val sizeBytes = boxStore?.dbSizeOnDisk ?: 0L
 
             DatabaseStats(
                 productCount = productCount,

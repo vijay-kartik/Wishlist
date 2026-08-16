@@ -135,10 +135,142 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "2:161298057642637290",
+      "lastPropertyId": "6:4425607768194327570",
+      "name": "KgEdge",
+      "properties": [
+        {
+          "id": "1:2670953216845309671",
+          "name": "edgeKey",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5078059854590309092",
+          "name": "fromKey",
+          "indexId": "3:2646253085764133483",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:7438920235410615848",
+          "name": "toKey",
+          "indexId": "4:7019268526395548369",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:7570410762048693159",
+          "name": "edgeTypeId",
+          "indexId": "5:7607277360746909743",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "5:5401290978932620141",
+          "name": "dedupKey",
+          "indexId": "6:3001935134489856097",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "6:4425607768194327570",
+          "name": "payload",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "3:7431010668276957762",
+      "lastPropertyId": "12:1621703109483537425",
+      "name": "KgNode",
+      "properties": [
+        {
+          "id": "1:5554100751459857728",
+          "name": "graphKey",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:243117834360846124",
+          "name": "graphId",
+          "indexId": "7:2680445883307304212",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:4382584989066861830",
+          "name": "nodeTypeId",
+          "indexId": "8:945879516841085112",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "4:8708177180046819526",
+          "name": "lookupKey",
+          "indexId": "9:6633787657279865244",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "5:4316070093854201739",
+          "name": "payload",
+          "type": 9
+        },
+        {
+          "id": "6:4052611780008499548",
+          "name": "predicateId",
+          "indexId": "10:1882674229306142100",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "7:8496516085934385723",
+          "name": "subjectKey",
+          "indexId": "11:4533988948391860528",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "8:4984048558033587431",
+          "name": "objectKey",
+          "indexId": "12:8140729141789877727",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "9:8197851401502538756",
+          "name": "observedAtEpochDay",
+          "type": 5
+        },
+        {
+          "id": "10:6242814259285334213",
+          "name": "confidence",
+          "type": 7
+        },
+        {
+          "id": "11:596900080252521465",
+          "name": "dismissedByKey",
+          "indexId": "13:1525243688479840285",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "12:1621703109483537425",
+          "name": "embedding",
+          "indexId": "14:8370886427912982704",
+          "type": 28,
+          "flags": 8
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "1:2167606129984663766",
-  "lastIndexId": "2:1261669843014307831",
+  "lastEntityId": "3:7431010668276957762",
+  "lastIndexId": "14:8370886427912982704",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

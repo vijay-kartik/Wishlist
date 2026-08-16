@@ -8,9 +8,16 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.example.app.wishlist.data.db.entity.Product
 import com.example.app.wishlist.data.repository.ProductRepository
+import com.example.app.wishlist.graph.core.SourceKind
+import com.example.app.wishlist.graph.ingest.IncomingMessage
+import com.example.app.wishlist.graph.ingest.IngestionOutcome
+import com.example.app.wishlist.graph.ingest.MessageIngestionPipeline
+import com.example.app.wishlist.ml.ShoppingNerModel
 import com.example.app.wishlist.util.NotificationParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -28,13 +35,26 @@ import timber.log.Timber
 class WhatsAppNotificationListener : NotificationListenerService() {
 
     private lateinit var productRepository: ProductRepository
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private lateinit var ingestionPipeline: MessageIngestionPipeline
+
+    // IO rather than Default: this work is dominated by ObjectBox transactions and model
+    // loading, not by CPU-bound computation, and it must never touch a binder thread.
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val notificationParser = NotificationParser()
 
     override fun onCreate() {
         super.onCreate()
         Timber.d("WhatsAppNotificationListener created")
         productRepository = ProductRepository(applicationContext)
+        ingestionPipeline = MessageIngestionPipeline(applicationContext)
+
+        // Warm the model now rather than on the first message. Loading takes long enough
+        // that doing it inline would delay the first capture noticeably, and this service
+        // is started well before any message arrives.
+        scope.launch {
+            runCatching { ShoppingNerModel.getOrCreate(applicationContext) }
+                .onFailure { Timber.w(it, "NER model unavailable; regex parser will be used") }
+        }
     }
 
     /**
@@ -98,7 +118,11 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                 senderName = senderName.trim(),
                 messageText = messageText.trim(),
                 timestamp = timestamp,
-                packageName = sbn.packageName
+                packageName = sbn.packageName,
+                // The notification's own identity, not a hash of its text. WhatsApp
+                // updates notifications in place and replays them on reconnect, so this
+                // is what makes re-ingestion a no-op instead of a duplicate fact.
+                notificationKey = sbn.key ?: "${sbn.packageName}:${sbn.id}:${sbn.postTime}"
             )
         } catch (e: Exception) {
             Timber.e(e, "Error extracting notification data")
@@ -112,28 +136,67 @@ class WhatsAppNotificationListener : NotificationListenerService() {
      */
     private suspend fun processWhatsAppMessage(data: NotificationData) {
         try {
-            Timber.d("Processing message from ${data.senderName}: ${data.messageText}")
+            Timber.d("Processing message from ${data.senderName}")
 
-            // Check if sender is in favorite contacts (optional validation)
             val isFavoriteContact = productRepository.isFavoriteContact(data.senderName)
             if (!isFavoriteContact) {
                 Timber.d("${data.senderName} is not in favorite contacts, skipping")
                 return
             }
 
-            // Parse message for product mentions
-            val detectedProducts = notificationParser.extractProductsFromText(data.messageText)
+            val outcome = ingestionPipeline.ingest(
+                IncomingMessage(
+                    senderName = data.senderName,
+                    text = data.messageText,
+                    postedAtMillis = data.timestamp,
+                    notificationKey = data.notificationKey,
+                    sourceKind = SourceKind.WHATSAPP_MSG,
+                )
+            )
 
-            if (detectedProducts.isEmpty()) {
-                Timber.d("No products detected in message")
-                return
+            when (outcome) {
+                is IngestionOutcome.Written -> {
+                    Timber.d(
+                        "Graph: %d assertion(s), predicate=%s, %d entities, %d ms",
+                        outcome.assertionCount, outcome.predicate, outcome.entities.size,
+                        outcome.inferenceMillis,
+                    )
+                    // Mirror into the flat Product table, which is still what the UI
+                    // reads. Per the spec this is a read model regenerated from the
+                    // graph; until that regeneration exists, it is written alongside.
+                    saveLegacyProducts(data)
+                    notifyUserProductsCaptured(data.senderName, outcome.assertionCount)
+                }
+
+                is IngestionOutcome.NerFailed -> {
+                    // The model is the better extractor, but a missing model must not
+                    // mean a dropped message — fall back to the regex parser.
+                    Timber.w("NER failed, falling back to regex parser")
+                    val saved = saveLegacyProducts(data)
+                    if (saved > 0) notifyUserProductsCaptured(data.senderName, saved)
+                }
+
+                IngestionOutcome.Duplicate ->
+                    Timber.d("Message already ingested; skipping")
+
+                IngestionOutcome.NothingExtracted ->
+                    Timber.d("Nothing extractable in message")
             }
+        } catch (e: Exception) {
+            Timber.e(e, "Error processing WhatsApp message")
+        }
+    }
 
-            Timber.d("Found ${detectedProducts.size} products in message")
-
-            // Save each detected product to database
-            for (productInfo in detectedProducts) {
-                val product = Product(
+    /**
+     * Writes the pre-graph [Product] rows the existing UI reads.
+     *
+     * @return how many rows were written.
+     */
+    private suspend fun saveLegacyProducts(data: NotificationData): Int {
+        val detectedProducts = notificationParser.extractProductsFromText(data.messageText)
+        for (productInfo in detectedProducts) {
+            productRepository.insertProduct(
+                Product(
                     name = productInfo.name,
                     category = productInfo.category,
                     price = productInfo.price,
@@ -142,22 +205,11 @@ class WhatsAppNotificationListener : NotificationListenerService() {
                     sourceContact = data.senderName,
                     messageContent = data.messageText,
                     capturedAt = System.currentTimeMillis(),
-                    messageTimestamp = data.timestamp
+                    messageTimestamp = data.timestamp,
                 )
-
-                productRepository.insertProduct(product)
-                Timber.d("Saved product: ${product.name} from ${product.sourceContact}")
-            }
-
-            // Optional: Send user notification that products were captured
-            notifyUserProductsCaptured(
-                contactName = data.senderName,
-                productCount = detectedProducts.size
             )
-
-        } catch (e: Exception) {
-            Timber.e(e, "Error processing WhatsApp message")
         }
+        return detectedProducts.size
     }
 
     /**
@@ -206,6 +258,10 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        scope.cancel()
+        // Frees the model's native memory. Android restarts this service freely, and a
+        // leaked Interpreter per restart would exhaust the process.
+        ShoppingNerModel.release()
         Timber.d("WhatsAppNotificationListener destroyed")
     }
 
@@ -216,7 +272,8 @@ class WhatsAppNotificationListener : NotificationListenerService() {
         val senderName: String,
         val messageText: String,
         val timestamp: Long,
-        val packageName: String
+        val packageName: String,
+        val notificationKey: String
     )
 
     companion object {

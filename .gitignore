@@ -13,3 +13,15 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# NER model binary — 110 MB. See docs/ner-pipeline.md for where to obtain it.
+# NOTE: this file is currently STAGED in git (`git status` shows it as added). Committing
+# a 110 MB binary bloats the repo permanently, since git history keeps every version.
+# To unstage: git rm --cached app/src/main/assets/ner_model_quantized.tflite
+app/src/main/assets/ner_model_quantized.tflite
+
+# ObjectBox writes a .bak of the entity model on every regeneration.
+# default.json itself MUST be committed — it holds the stable UIDs that let ObjectBox
+# migrate existing databases. Losing it means every entity gets new UIDs and existing
+# app data is dropped.
+app/objectbox-models/*.json.bak
